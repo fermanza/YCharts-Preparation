@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8,<9", "pytest-django>=4.9,<5", "ruff>=0.12,<1"]
+dev = ["pytest>=8,<10", "pytest-django>=4.9,<5", "ruff>=0.12,<1"]
 
 [tool.setuptools.packages.find]
 include = ["config*", "marketdata*", "practice*"]
