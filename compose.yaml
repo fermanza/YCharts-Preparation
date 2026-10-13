@@ -1,0 +1,100 @@
+x-app-env: &app-env
+  DJANGO_SETTINGS_MODULE: config.settings
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: financial_lab
+  POSTGRES_USER: financial_lab
+  POSTGRES_PASSWORD: local-demo-password
+  CELERY_BROKER_URL: redis://redis:6379/0
+  CELERY_RESULT_BACKEND: redis://redis:6379/1
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: financial_lab
+      POSTGRES_USER: financial_lab
+      POSTGRES_PASSWORD: local-demo-password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U financial_lab -d financial_lab"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  web:
+    build: .
+    environment:
+      <<: *app-env
+      DATA_DIR: /app/data/provider
+      DATA_WORK_DIR: /app/data/work
+    command: ["sh", "-c", "mkdir -p /app/data/work && chmod 0777 /app/data/work && python manage.py migrate && python manage.py demo_pipeline && python manage.py runserver 0.0.0.0:8000 --noreload"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data/provider:/app/data/provider
+      - manifest-work:/app/data/work
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
+  worker:
+    build: .
+    environment: *app-env
+    command: ["celery", "-A", "config.celery:app", "worker", "--loglevel=INFO", "--concurrency=2"]
+    depends_on:
+      web:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  airflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    environment:
+      <<: *app-env
+      AIRFLOW_HOME: /opt/airflow
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/project/dags
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__PARALLELISM: "4"
+      AIRFLOW__CORE__DAG_RUN_CONF_OVERRIDES_PARAMS: "True"
+      AIRFLOW__CORE__MAX_MAP_LENGTH: "4096"
+      AIRFLOW__API__HOST: 0.0.0.0
+      AIRFLOW__API__PORT: "8080"
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://127.0.0.1:8080/execution/
+      DATA_DIR: /opt/project/data/provider
+      DATA_WORK_DIR: /opt/project/data/work
+    command: standalone
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - airflow-data:/opt/airflow
+      - ./data/provider:/opt/project/data/provider:ro
+      - manifest-work:/opt/project/data/work
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  airflow-data:
+  manifest-work:
